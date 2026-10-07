@@ -201,6 +201,9 @@ static void open_pipewire_remote(struct screencast_portal_capture *capture)
 {
 	GVariantBuilder builder;
 
+	if (!capture->session_handle)
+		return;
+
 	g_variant_builder_init(&builder, G_VARIANT_TYPE_VARDICT);
 
 	g_dbus_proxy_call_with_unix_fd_list(get_screencast_portal_proxy(), "OpenPipeWireRemote",
@@ -290,6 +293,9 @@ static void start(struct screencast_portal_capture *capture)
 	char *request_token;
 	char *request_path;
 
+	if (!capture->session_handle)
+		return;
+
 	portal_create_request_path(&request_path, &request_token);
 
 	blog(LOG_INFO, "[pipewire] Asking for %s", capture_type_to_string(capture->capture_type));
@@ -349,6 +355,9 @@ static void select_source(struct screencast_portal_capture *capture)
 	char *request_token;
 	char *request_path;
 
+	if (!capture->session_handle)
+		return;
+
 	portal_create_request_path(&request_path, &request_token);
 
 	portal_signal_subscribe(request_path, capture->cancellable, on_select_source_response_received_cb, capture);
@@ -401,9 +410,16 @@ static void on_create_session_response_received_cb(GVariant *parameters, void *u
 		return;
 	}
 
-	blog(LOG_INFO, "[pipewire] Screencast session created");
-
 	session_handle_variant = g_variant_lookup_value(result, "session_handle", NULL);
+	if (!session_handle_variant ||
+	    (!g_variant_is_of_type(session_handle_variant, G_VARIANT_TYPE_STRING) &&
+	     !g_variant_is_of_type(session_handle_variant, G_VARIANT_TYPE_OBJECT_PATH)) ||
+	    !g_variant_is_object_path(g_variant_get_string(session_handle_variant, NULL))) {
+		blog(LOG_WARNING, "[pipewire] Invalid screencast session handle");
+		return;
+	}
+
+	blog(LOG_INFO, "[pipewire] Screencast session created");
 	capture->session_handle = g_variant_dup_string(session_handle_variant, NULL);
 
 	select_source(capture);
@@ -450,11 +466,20 @@ static void create_session(struct screencast_portal_capture *capture)
 
 /* ------------------------------------------------- */
 
+static void cancel_screencast_requests(struct screencast_portal_capture *capture)
+{
+	if (capture->cancellable) {
+		g_cancellable_cancel(capture->cancellable);
+		g_clear_object(&capture->cancellable);
+	}
+}
+
 static gboolean init_screencast_capture(struct screencast_portal_capture *capture)
 {
 	GDBusConnection *connection;
 	GDBusProxy *proxy;
 
+	cancel_screencast_requests(capture);
 	capture->cancellable = g_cancellable_new();
 	connection = portal_get_dbus_connection();
 	if (!connection)
@@ -476,6 +501,8 @@ static bool reload_session_cb(obs_properties_t *properties, obs_property_t *prop
 	UNUSED_PARAMETER(property);
 
 	struct screencast_portal_capture *capture = data;
+
+	cancel_screencast_requests(capture);
 
 	g_clear_pointer(&capture->restore_token, bfree);
 	g_clear_pointer(&capture->obs_pw_stream, obs_pipewire_stream_destroy);
@@ -560,6 +587,8 @@ static void screencast_portal_capture_destroy(void *data)
 	if (!capture)
 		return;
 
+	cancel_screencast_requests(capture);
+
 	if (capture->session_handle) {
 		g_dbus_connection_call(portal_get_dbus_connection(), "org.freedesktop.portal.Desktop",
 				       capture->session_handle, "org.freedesktop.portal.Session", "Close", NULL, NULL,
@@ -572,8 +601,6 @@ static void screencast_portal_capture_destroy(void *data)
 
 	g_clear_pointer(&capture->obs_pw_stream, obs_pipewire_stream_destroy);
 	obs_pipewire_destroy(capture->obs_pw);
-	g_cancellable_cancel(capture->cancellable);
-	g_clear_object(&capture->cancellable);
 	bfree(capture);
 }
 

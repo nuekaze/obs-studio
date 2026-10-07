@@ -9,6 +9,7 @@
 !/docs
 !/frontend
 !/libobs*
+!/local-fix
 !/plugins
 !/shared
 !/test

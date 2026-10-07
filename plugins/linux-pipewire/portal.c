@@ -128,12 +128,10 @@ void portal_create_session_path(char **out_path, char **out_token)
 
 static void portal_signal_call_free(struct portal_signal_call *call)
 {
-	if (call->signal_id)
-		g_dbus_connection_signal_unsubscribe(portal_get_dbus_connection(), call->signal_id);
-
 	if (call->cancelled_id > 0)
 		g_signal_handler_disconnect(call->cancellable, call->cancelled_id);
 
+	g_clear_object(&call->cancellable);
 	g_clear_pointer(&call->request_path, bfree);
 	bfree(call);
 }
@@ -150,7 +148,7 @@ static void on_cancelled_cb(GCancellable *cancellable, void *data)
 			       "org.freedesktop.portal.Request", "Close", NULL, NULL, G_DBUS_CALL_FLAGS_NONE, -1, NULL,
 			       NULL, NULL);
 
-	portal_signal_call_free(call);
+	g_dbus_connection_signal_unsubscribe(portal_get_dbus_connection(), call->signal_id);
 }
 
 static void on_response_received_cb(GDBusConnection *connection, const char *sender_name, const char *object_path,
@@ -165,16 +163,25 @@ static void on_response_received_cb(GDBusConnection *connection, const char *sen
 
 	struct portal_signal_call *call = user_data;
 
-	if (call->callback)
+	/* A response callback may cancel or replace the session itself. */
+	if (call->cancelled_id > 0) {
+		g_signal_handler_disconnect(call->cancellable, call->cancelled_id);
+		call->cancelled_id = 0;
+	}
+
+	if (call->callback && (!call->cancellable || !g_cancellable_is_cancelled(call->cancellable)))
 		call->callback(parameters, call->user_data);
 
-	portal_signal_call_free(call);
+	g_dbus_connection_signal_unsubscribe(portal_get_dbus_connection(), call->signal_id);
 }
 
 void portal_signal_subscribe(const char *path, GCancellable *cancellable, portal_signal_callback callback,
 			     gpointer user_data)
 {
 	struct portal_signal_call *call;
+
+	if (cancellable && g_cancellable_is_cancelled(cancellable))
+		return;
 
 	call = bzalloc(sizeof(struct portal_signal_call));
 	call->request_path = bstrdup(path);
@@ -186,5 +193,5 @@ void portal_signal_subscribe(const char *path, GCancellable *cancellable, portal
 	call->signal_id = g_dbus_connection_signal_subscribe(
 		portal_get_dbus_connection(), "org.freedesktop.portal.Desktop", "org.freedesktop.portal.Request",
 		"Response", call->request_path, NULL, G_DBUS_SIGNAL_FLAGS_NO_MATCH_RULE, on_response_received_cb, call,
-		NULL);
+		(GDestroyNotify)portal_signal_call_free);
 }

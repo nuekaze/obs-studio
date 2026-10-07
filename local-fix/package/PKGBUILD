@@ -1,0 +1,18 @@
+# Repackage the installed Arch build, replacing only linux-pipewire.so.
+pkgname=obs-studio
+pkgver=32.2.2
+pkgrel=1.1
+pkgdesc='Free, open source software for live streaming and recording (local PipeWire session fix)'
+arch=(x86_64)
+url=https://obsproject.com
+license=(GPL-2.0-only)
+depends=(ffmpeg jansson libxinerama libxkbcommon-x11 mbedtls3 rnnoise pciutils qt6-svg curl jack gtk-update-icon-cache pipewire libxcomposite libdatachannel uthash simde qrcodegencpp-cmake python luajit)
+optdepends=('libfdk-aac: FDK AAC codec support' 'libva-intel-driver: hardware encoding for older Intel GPUs' 'intel-media-driver: hardware encoding for recent Intel GPUs' 'libva-mesa-driver: hardware encoding' 'sndio: Sndio input client' 'v4l2loopback-dkms: virtual camera support' 'xdg-desktop-portal-impl: Wayland window/screen capture' 'obs-studio-plugin-browser: CEF-based browser plugin')
+options=(!strip !debug)
+source=('obs-studio-32.2.2-1-x86_64.pkg.tar.zst' 'linux-pipewire.so')
+noextract=('obs-studio-32.2.2-1-x86_64.pkg.tar.zst')
+sha256sums=(160a66705327d25c617965bc2abbd92101443072a186ab682ee3f39d6c49746b 79ef0fb7c19361eb28485a7a37f9744ab9011e7d1547e8e32120d7d4551a45b6)
+package() {
+  bsdtar --no-same-owner -xf "$srcdir/obs-studio-32.2.2-1-x86_64.pkg.tar.zst" -C "$pkgdir" --exclude .PKGINFO --exclude .BUILDINFO --exclude .MTREE
+  install -m 755 "$srcdir/linux-pipewire.so" "$pkgdir/usr/lib/obs-plugins/linux-pipewire.so"
+}
